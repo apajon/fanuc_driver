@@ -314,13 +314,20 @@ DisconnectPacket::Response RMIConnection::disconnect(const std::optional<double>
   return getResponsePacket<DisconnectPacket::Response>(timeout, "Failed to disconnect from RMI server. ", std::nullopt);
 }
 
+void RMIConnection::setGroupMask(std::optional<uint8_t> group_mask)
+{
+  group_mask_ = group_mask;
+}
+
 InitializePacket::Response RMIConnection::initializeRemoteMotion(const std::optional<double> timeout)
 {
   {
     std::scoped_lock lock(mutex_);
     sequence_number_ = 1;  // Reset sequence number for a new session
   }
-  connection_impl_->write(InitializePacket::Request());
+  InitializePacket::Request init_request;
+  init_request.GroupMask = group_mask_;
+  connection_impl_->write(init_request);
   return getResponsePacket<InitializePacket::Response>(timeout, "Failed to initialize RMI. ", std::nullopt);
 }
 

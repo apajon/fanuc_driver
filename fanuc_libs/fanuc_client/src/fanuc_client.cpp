@@ -491,6 +491,7 @@ void FanucClient::startRMI()
     return;
   }
 
+  rmi_connection_->setGroupMask(group_mask_);
   try
   {
     rmi_connection_->reset(std::nullopt);

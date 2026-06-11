@@ -12,6 +12,7 @@
   <xacro:arg name="force_sensor_type" default="0"/>
   <xacro:arg name="use_mock" default="false"/>
   <xacro:arg name="motion_control" default="1"/>
+  <xacro:arg name="group_mask" default="0"/>
   <xacro:arg name="origin_xyz" default="0 0 0"/>
   <xacro:arg name="origin_rpy" default="0 0 0"/>
   <xacro:arg name="parent_link" default="world"/>

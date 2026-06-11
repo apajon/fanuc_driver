@@ -25,6 +25,12 @@ public:
 
   virtual InitializePacket::Response initializeRemoteMotion(std::optional<double> timeout) = 0;
 
+  /** Set the group bitmask applied to every subsequent FRC_Initialize call.
+   *  group_mask = std::nullopt (default) lets the controller decide which groups are active.
+   *  group_mask = 0x01 restricts RMI to group 1 (robot arm) on a multi-group controller.
+   */
+  virtual void setGroupMask(std::optional<uint8_t> /*group_mask*/) {}
+
   virtual ProgramCallPacket::Response programCall(const std::string& program_name, std::optional<double> timeout) = 0;
 
   virtual ProgramCallPacket::Request programCallNonBlocking(const std::string& program_name) = 0;
@@ -120,6 +126,8 @@ public:
   DisconnectPacket::Response disconnect(std::optional<double> timeout) override;
 
   InitializePacket::Response initializeRemoteMotion(std::optional<double> timeout) override;
+
+  void setGroupMask(std::optional<uint8_t> group_mask) override;
 
   ProgramCallPacket::Response programCall(const std::string& program_name, std::optional<double> timeout) override;
 
@@ -222,6 +230,7 @@ private:
   mutable std::mutex motion_mutex_;
 
   const std::unique_ptr<PConnectionImpl> connection_impl_;
+  std::optional<uint8_t> group_mask_ = std::nullopt;  // Applied in FRC_Initialize; nullopt = all groups
 };
 
 }  // namespace rmi

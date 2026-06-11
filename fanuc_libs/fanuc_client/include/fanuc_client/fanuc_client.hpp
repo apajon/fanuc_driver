@@ -98,6 +98,14 @@ public:
     do_motn_ctrl_ = do_motn_ctrl;
   }
 
+  // Set the RMI group bitmask sent in FRC_Initialize.
+  // group_mask = std::nullopt: controller selects active groups (default, single-group robots).
+  // group_mask = 0x01: restrict RMI to group 1 (robot arm) on a multi-group controller.
+  void setGroupMask(const std::optional<uint8_t> group_mask)
+  {
+    group_mask_ = group_mask;
+  }
+
   bool getLimits(double v_peak, double payload, std::vector<double>& vel_limit, std::vector<double>& acc_limit,
                  std::vector<double>& jerk_limit) const;
 
@@ -212,6 +220,7 @@ private:
   std::thread rt_thread_;
 
   bool do_motn_ctrl_ = true;
+  std::optional<uint8_t> group_mask_ = std::nullopt;  // RMI group bitmask; nullopt = all groups
 
   // Manages RMI connection
   std::shared_ptr<rmi::RMIConnectionInterface> rmi_connection_;
