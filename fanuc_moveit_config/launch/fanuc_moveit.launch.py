@@ -165,7 +165,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "gpio_config_path",
-            default_value="config/example_gpio_config.yaml",
+            default_value="config/example_gpio_config_small.yaml",
             description="The gpio_configuration file path in gpio_config_package",
         ),
         DeclareLaunchArgument(

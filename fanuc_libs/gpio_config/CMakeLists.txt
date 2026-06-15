@@ -8,6 +8,13 @@ project(gpio_config)
 
 add_library(gpio_config SHARED src/gpio_config.cpp )
 target_link_libraries(gpio_config PRIVATE reflectcpp)
+# Localize symbols pulled in from the statically-linked reflectcpp / yaml-cpp
+# archives so they are NOT exported into rmi.so's dynamic symbol table.
+# Otherwise this .so exports yaml-cpp 0.9.0 symbols that collide (ODR) with
+# the system yaml_cpp_vendor (0.8.x) used by fanuc_ethercat_hw_plugin,
+# causing a SIGSEGV in EthercatDriver::setupSlave (YAML::LoadFile) when both
+# .so files are co-loaded (multi_bus_sm profile).
+# target_link_options(rmi PRIVATE -Wl,--exclude-libs,ALL)
 target_include_directories(gpio_config PUBLIC
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
