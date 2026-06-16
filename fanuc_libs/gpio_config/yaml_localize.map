@@ -1,0 +1,20 @@
+# Linker version script: hide statically-embedded yaml-cpp 0.9.0 symbols.
+#
+# gpio_config.cpp instantiates reflect-cpp's YAML reader in its own
+# translation unit, which emits header-only yaml-cpp template symbols
+# (YAML::*) with weak/vague linkage directly into gpio_config.cpp.o.
+# --exclude-libs,ALL only localizes symbols pulled from static ARCHIVES,
+# so those TU-emitted weak YAML:: symbols stayed exported and kept
+# interposing the system yaml_cpp_vendor (0.8.x) used by EtherCAT
+# ros2_control plugins (ethercat_driver_ros2 / EthercatDriver), causing
+# a SIGSEGV in EthercatDriver::setupSlave (YAML::LoadFile) when both
+# .so files are co-loaded in the same ros2_control process.
+#
+# Keep everything global EXCEPT the embedded yaml-cpp implementation
+# symbols, which become local (each .so keeps its private copy).
+{
+  global: *;
+  local:
+    *4YAML*;
+    extern "C++" { "YAML::*"; };
+};
