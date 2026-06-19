@@ -365,7 +365,16 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     }
   }
 
+  // use_rmi=1 (default) keeps the standard RMI bootstrap. use_rmi=0 runs the driver in
+  // Stream Motion only mode: no RMI TCP connection is opened and all RMI calls are skipped.
+  // The controller-side bootstrap (FRC_Initialize, STREAM_MOTN.TP start) must then be
+  // provided externally (e.g. via EtherCAT).
+  const auto use_rmi_it = info_.hardware_parameters.find("use_rmi");
+  use_rmi_ = (use_rmi_it == info_.hardware_parameters.end() || use_rmi_it->second.empty()) ||
+             (StringToInt("use_rmi", use_rmi_it->second) == 1);
+
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "payload_schedule: " << payload_schedule_);
+  RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "use_rmi: " << use_rmi_);
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Starting RMI with: " << ip_address_);
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Initial Motion Control Mode: " << initial_motion_control);
 
@@ -376,7 +385,8 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     try
     {
       fanuc_client_.reset();
-      fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_);
+      fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_, nullptr,
+                                                                 nullptr, use_rmi_);
       fanuc_client_->setDoMotnCtrl(initial_motion_control);
       fanuc_client_->setGroupMask(initial_group_mask);
       fanuc_client_->setOutCmdInterpBuffTarget(out_cmd_interp_buff_target_);

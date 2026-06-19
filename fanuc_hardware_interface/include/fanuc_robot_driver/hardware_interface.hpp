@@ -99,6 +99,7 @@ private:
   uint16_t rmi_port_;
   uint32_t out_cmd_interp_buff_target_;
   uint32_t force_sensor_type_;
+  bool use_rmi_{ true };
 
   std::shared_ptr<fanuc_client::GPIOBuffer> gpio_buffer_;
 
