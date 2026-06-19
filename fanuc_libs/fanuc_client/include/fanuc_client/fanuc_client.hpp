@@ -56,7 +56,8 @@ public:
   FanucClient() = delete;
   explicit FanucClient(std::string robot_ip, uint16_t stream_motion_port = 60015, uint16_t rmi_port = 16001,
                        std::unique_ptr<stream_motion::StreamMotionInterface> stream_motion_interface = nullptr,
-                       std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface = nullptr);
+                       std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface = nullptr,
+                       bool use_rmi = true);
 
   FanucClient(const FanucClient&) = delete;
   FanucClient& operator=(const FanucClient&) = delete;
@@ -222,7 +223,12 @@ private:
   bool do_motn_ctrl_ = true;
   std::optional<uint8_t> group_mask_ = std::nullopt;  // RMI group bitmask; nullopt = all groups
 
-  // Manages RMI connection
+  // When false, the RMI TCP connection is never created and all RMI calls are skipped
+  // (Stream Motion only). The controller-side bootstrap (FRC_Initialize, STREAM_MOTN.TP
+  // start, remote-motion enable) must then be provided externally (e.g. via EtherCAT).
+  const bool use_rmi_;
+
+  // Manages RMI connection (nullptr when use_rmi_ is false)
   std::shared_ptr<rmi::RMIConnectionInterface> rmi_connection_;
   std::atomic<bool> rmi_running_ = false;
 
