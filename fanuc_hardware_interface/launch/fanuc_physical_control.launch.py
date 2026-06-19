@@ -4,7 +4,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, OpaqueFunction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    LogInfo,
+    OpaqueFunction,
+)
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import (
     Command,
@@ -29,6 +34,7 @@ def launch_setup(context, *args, **kwargs):
     launch_rviz = LaunchConfiguration("launch_rviz")
     motion_control = LaunchConfiguration("motion_control")
     group_mask = LaunchConfiguration("group_mask")
+    use_rmi = LaunchConfiguration("use_rmi")
     namespace = LaunchConfiguration("namespace")
     prefix = LaunchConfiguration("prefix")
     child_link = LaunchConfiguration("child_link")
@@ -52,7 +58,9 @@ def launch_setup(context, *args, **kwargs):
         [
             PathJoinSubstitution([FindExecutable(name="xacro")]),
             " ",
-            PathJoinSubstitution([FindPackageShare("fanuc_hardware_interface"), "robot", urdf_xacro_file]),
+            PathJoinSubstitution(
+                [FindPackageShare("fanuc_hardware_interface"), "robot", urdf_xacro_file]
+            ),
             " ",
             "robot_series:=",
             robot_series,
@@ -61,13 +69,18 @@ def launch_setup(context, *args, **kwargs):
             robot_ip,
             " ",
             "gpio_configuration:=",
-            PathJoinSubstitution([FindPackageShare(gpio_config_package), gpio_config_path]),
+            PathJoinSubstitution(
+                [FindPackageShare(gpio_config_package), gpio_config_path]
+            ),
             " ",
             "motion_control:=",
             motion_control,
             " ",
             "group_mask:=",
             group_mask,
+            " ",
+            "use_rmi:=",
+            use_rmi,
             " ",
             "robot_model:=",
             robot_model,
@@ -94,7 +107,9 @@ def launch_setup(context, *args, **kwargs):
             "' ",
         ]
     )
-    robot_description = {"robot_description": ParameterValue(value=robot_description, value_type=str)}
+    robot_description = {
+        "robot_description": ParameterValue(value=robot_description, value_type=str)
+    }
 
     ros_parameters = [
         robot_description,
@@ -121,7 +136,9 @@ def launch_setup(context, *args, **kwargs):
 
     rviz_file = PathJoinSubstitution(
         [
-            FindPackageShare(PythonExpression(['"fanuc_" + "', robot_series, '" + "_description"'])),
+            FindPackageShare(
+                PythonExpression(['"fanuc_" + "', robot_series, '" + "_description"'])
+            ),
             "rviz",
             PythonExpression(['"view_" + "', robot_series, '" + ".rviz"']),
         ]
@@ -140,7 +157,9 @@ def launch_setup(context, *args, **kwargs):
     if namespace_str == "":
         controller_manager_name_argument = ""
     else:
-        controller_manager_name_argument = " -c /" + namespace_str + "/controller_manager"
+        controller_manager_name_argument = (
+            " -c /" + namespace_str + "/controller_manager"
+        )
 
     controller_spawner_processes = [
         ExecuteProcess(
@@ -222,7 +241,9 @@ def generate_launch_description():
         ),
         LogInfo(
             msg="The argument gpio_configuration is deprecated. Use gpio_config_package and gpio_config_path instead.",
-            condition=UnlessCondition(EqualsSubstitution(LaunchConfiguration("gpio_configuration"), "")),
+            condition=UnlessCondition(
+                EqualsSubstitution(LaunchConfiguration("gpio_configuration"), "")
+            ),
         ),
         DeclareLaunchArgument(
             "gpio_config_package",
@@ -243,6 +264,11 @@ def generate_launch_description():
             "group_mask",
             default_value="0",
             description="RMI group bitmask for FRC_Initialize. 0 = all groups (default). 1 = group 1 only (robot arm on multi-group controllers).",
+        ),
+        DeclareLaunchArgument(
+            "use_rmi",
+            default_value="1",
+            description="Enable the RMI bootstrap. 1 = standard (RMI TCP connection + STREAM_MOTN.TP start). 0 = Stream Motion only, no RMI TCP; controller bootstrap must be provided externally (e.g. via EtherCAT).",
         ),
         DeclareLaunchArgument(
             "launch_rviz",
@@ -300,4 +326,6 @@ def generate_launch_description():
             description="Yaw rotation from parent_link to base_link",
         ),
     ]
-    return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])
+    return LaunchDescription(
+        declared_arguments + [OpaqueFunction(function=launch_setup)]
+    )
