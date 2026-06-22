@@ -715,17 +715,18 @@ void FanucClient::stopRealtimeStream()
 }
 
 bool FanucClient::isStreaming()
-{
-  return is_streaming_;
-}
+{ return is_streaming_; }
 
 uint32_t FanucClient::getControlPeriod() const
-{
-  return control_period_;
-}
+{ return control_period_; }
 
 void FanucClient::setPayloadSchedule(const uint8_t payload_schedule) const
 {
+  if (!use_rmi_)
+  {
+    // RMI disabled (Stream Motion only): payload scheduling is managed externally.
+    return;
+  }
   rmi_connection_->setPayloadSchedule(payload_schedule, std::nullopt);
 }
 
