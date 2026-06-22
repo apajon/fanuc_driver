@@ -35,6 +35,7 @@ def launch_setup(context, *args, **kwargs):
     motion_control = LaunchConfiguration("motion_control")
     group_mask = LaunchConfiguration("group_mask")
     use_rmi = LaunchConfiguration("use_rmi")
+    control_period_ms = LaunchConfiguration("control_period_ms")
     namespace = LaunchConfiguration("namespace")
     prefix = LaunchConfiguration("prefix")
     child_link = LaunchConfiguration("child_link")
@@ -81,6 +82,9 @@ def launch_setup(context, *args, **kwargs):
             " ",
             "use_rmi:=",
             use_rmi,
+            " ",
+            "control_period_ms:=",
+            control_period_ms,
             " ",
             "robot_model:=",
             robot_model,
@@ -269,6 +273,11 @@ def generate_launch_description():
             "use_rmi",
             default_value="1",
             description="Enable the RMI bootstrap. 1 = standard (RMI TCP connection + STREAM_MOTN.TP start). 0 = Stream Motion only, no RMI TCP; controller bootstrap must be provided externally (e.g. via EtherCAT).",
+        ),
+        DeclareLaunchArgument(
+            "control_period_ms",
+            default_value="8",
+            description="Stream Motion sampling period in milliseconds, used to compute joint velocities. With use_rmi=1 it is overwritten by the controller capability handshake; with use_rmi=0 this value is used as-is.",
         ),
         DeclareLaunchArgument(
             "launch_rviz",

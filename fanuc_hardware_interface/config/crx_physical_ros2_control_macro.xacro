@@ -45,6 +45,7 @@
 	      <param name="motion_control">$(arg motion_control)</param>
         <param name="group_mask">$(arg group_mask)</param>
         <param name="use_rmi">$(arg use_rmi)</param>
+        <param name="control_period_ms">$(arg control_period_ms)</param>
       </hardware>
     </ros2_control>
   </xacro:macro>

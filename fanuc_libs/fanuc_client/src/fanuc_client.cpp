@@ -81,7 +81,8 @@ struct FanucClient::PQueueImpl
 
 FanucClient::FanucClient(std::string robot_ip, const uint16_t stream_motion_port, const uint16_t rmi_port,
                          std::unique_ptr<stream_motion::StreamMotionInterface> stream_motion_interface,
-                         std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface, const bool use_rmi)
+                         std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface, const bool use_rmi,
+                         const uint32_t control_period_ms)
   : robot_ip_{ std::move(robot_ip) }
   , stream_motion_port_{ stream_motion_port }
   , rmi_port_{ rmi_port }
@@ -103,11 +104,21 @@ FanucClient::FanucClient(std::string robot_ip, const uint16_t stream_motion_port
     rmi_connection_->connect(5);
   }
   stream_motion_->sendStopPacket();
-  stream_motion::ControllerCapabilityResultPacket controller_capability;
-  stream_motion_->getControllerCapability(controller_capability);
-  control_period_ = controller_capability.sampling_rate;
-  client_version_ = controller_capability.available_version;
-  fetchRobotLimits();
+  if (use_rmi_)
+  {
+    stream_motion::ControllerCapabilityResultPacket controller_capability;
+    stream_motion_->getControllerCapability(controller_capability);
+    control_period_ = controller_capability.sampling_rate;
+    client_version_ = controller_capability.available_version;
+    fetchRobotLimits();
+  }
+  else
+  {
+    // Stream Motion only: STREAM_MOTN.TP and remote-motion are bootstrapped externally
+    // (e.g. via EtherCAT). The synchronous capability/limits handshake is not answered by
+    // the controller in this mode, so skip it and use the externally provided control period.
+    control_period_ = control_period_ms;
+  }
 
   setupSignalHandler();
 }

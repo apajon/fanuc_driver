@@ -100,6 +100,7 @@ private:
   uint32_t out_cmd_interp_buff_target_;
   uint32_t force_sensor_type_;
   bool use_rmi_{ true };
+  uint32_t control_period_ms_{ 8 };
 
   std::shared_ptr<fanuc_client::GPIOBuffer> gpio_buffer_;
 

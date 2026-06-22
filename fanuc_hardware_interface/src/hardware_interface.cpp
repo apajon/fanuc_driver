@@ -373,9 +373,31 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
   use_rmi_ = (use_rmi_it == info_.hardware_parameters.end() || use_rmi_it->second.empty()) ||
              (StringToInt("use_rmi", use_rmi_it->second) == 1);
 
+  // control_period_ms is the Stream Motion sampling period (ms) used to compute joint
+  // velocities. With use_rmi=1 it is overwritten by the controller capability handshake.
+  // With use_rmi=0 that handshake is skipped, so this value is used as-is (default 8 ms).
+  const auto control_period_ms_it = info_.hardware_parameters.find("control_period_ms");
+  if (control_period_ms_it != info_.hardware_parameters.end() && !control_period_ms_it->second.empty())
+  {
+    const int control_period_ms_value = StringToInt("control_period_ms", control_period_ms_it->second);
+    if (control_period_ms_value > 0)
+    {
+      control_period_ms_ = static_cast<uint32_t>(control_period_ms_value);
+    }
+  }
+
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "payload_schedule: " << payload_schedule_);
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "use_rmi: " << use_rmi_);
-  RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Starting RMI with: " << ip_address_);
+  if (use_rmi_)
+  {
+    RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Starting RMI with: " << ip_address_);
+  }
+  else
+  {
+    RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface),
+                       "RMI disabled (Stream Motion only): no RMI/TCP connection to " << ip_address_);
+    RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Using control_period_ms: " << control_period_ms_);
+  }
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Initial Motion Control Mode: " << initial_motion_control);
 
   // Initialize the driver client
@@ -386,7 +408,7 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     {
       fanuc_client_.reset();
       fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_, nullptr,
-                                                                 nullptr, use_rmi_);
+                                                                 nullptr, use_rmi_, control_period_ms_);
       fanuc_client_->setDoMotnCtrl(initial_motion_control);
       fanuc_client_->setGroupMask(initial_group_mask);
       fanuc_client_->setOutCmdInterpBuffTarget(out_cmd_interp_buff_target_);
