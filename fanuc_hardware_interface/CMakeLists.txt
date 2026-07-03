@@ -21,6 +21,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(hardware_interface REQUIRED)
+find_package(lifecycle_msgs REQUIRED)
 find_package(pluginlib REQUIRED)
 find_package(fanuc_libs REQUIRED)
 
@@ -32,6 +33,7 @@ target_link_libraries(fanuc_robot_driver PUBLIC
   fanuc_libs::stream_motion
   fanuc_libs::fanuc_client
   fanuc_libs::gpio_config
+  lifecycle_msgs::lifecycle_msgs__rosidl_generator_cpp
 )
 
 if(${hardware_interface_VERSION} VERSION_LESS 2.52.0)
