@@ -354,6 +354,19 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     return CallbackReturn::ERROR;
   }
 
+  // group_mask=0 (XACRO default) means "let the controller decide" (nullopt = all active groups).
+  // Set group_mask=1 to restrict RMI to group 1 (robot arm) on a multi-group controller.
+  std::optional<uint8_t> initial_group_mask = std::nullopt;
+  const auto group_mask_it = info_.hardware_parameters.find("group_mask");
+  if (group_mask_it != info_.hardware_parameters.end())
+  {
+    const int mask_val = StringToInt("group_mask", group_mask_it->second);
+    if (mask_val > 0)
+    {
+      initial_group_mask = static_cast<uint8_t>(mask_val);
+    }
+  }
+
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "payload_schedule: " << payload_schedule_);
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Starting RMI with: " << ip_address_);
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Initial Motion Control Mode: " << initial_motion_control);
@@ -367,6 +380,7 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
       fanuc_client_.reset();
       fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_);
       fanuc_client_->setDoMotnCtrl(initial_motion_control);
+      fanuc_client_->setGroupMask(initial_group_mask);
       fanuc_client_->setOutCmdInterpBuffTarget(out_cmd_interp_buff_target_);
       fanuc_client_->setForceSensorType(force_sensor_type_);
       if (initial_motion_control)
