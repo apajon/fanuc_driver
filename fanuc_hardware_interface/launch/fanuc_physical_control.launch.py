@@ -6,21 +6,21 @@
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
-    OpaqueFunction,
     ExecuteProcess,
     LogInfo,
+    OpaqueFunction,
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import (
     Command,
+    EqualsSubstitution,
     FindExecutable,
     LaunchConfiguration,
     PathJoinSubstitution,
     PythonExpression,
-    EqualsSubstitution,
 )
-from launch_ros.parameter_descriptions import ParameterValue, ParameterFile
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterFile, ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -33,6 +33,9 @@ def launch_setup(context, *args, **kwargs):
     gpio_config_path = LaunchConfiguration("gpio_config_path")
     launch_rviz = LaunchConfiguration("launch_rviz")
     motion_control = LaunchConfiguration("motion_control")
+    group_mask = LaunchConfiguration("group_mask")
+    use_rmi = LaunchConfiguration("use_rmi")
+    control_period_ms = LaunchConfiguration("control_period_ms")
     namespace = LaunchConfiguration("namespace")
     prefix = LaunchConfiguration("prefix")
     child_link = LaunchConfiguration("child_link")
@@ -73,6 +76,15 @@ def launch_setup(context, *args, **kwargs):
             " ",
             "motion_control:=",
             motion_control,
+            " ",
+            "group_mask:=",
+            group_mask,
+            " ",
+            "use_rmi:=",
+            use_rmi,
+            " ",
+            "control_period_ms:=",
+            control_period_ms,
             " ",
             "robot_model:=",
             robot_model,
@@ -251,6 +263,21 @@ def generate_launch_description():
             "motion_control",
             default_value="1",
             description="Initial motion control state.",
+        ),
+        DeclareLaunchArgument(
+            "group_mask",
+            default_value="0",
+            description="RMI group bitmask for FRC_Initialize. 0 = all groups (default). 1 = group 1 only (robot arm on multi-group controllers).",
+        ),
+        DeclareLaunchArgument(
+            "use_rmi",
+            default_value="1",
+            description="Enable the RMI bootstrap. 1 = standard (RMI TCP connection + STREAM_MOTN.TP start). 0 = Stream Motion only, no RMI TCP; controller bootstrap must be provided externally (e.g. via EtherCAT).",
+        ),
+        DeclareLaunchArgument(
+            "control_period_ms",
+            default_value="8",
+            description="Stream Motion sampling period in milliseconds, used to compute joint velocities. With use_rmi=1 it is overwritten by the controller capability handshake; with use_rmi=0 this value is used as-is.",
         ),
         DeclareLaunchArgument(
             "launch_rviz",

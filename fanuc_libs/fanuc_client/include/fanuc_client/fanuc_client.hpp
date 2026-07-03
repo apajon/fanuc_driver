@@ -56,7 +56,8 @@ public:
   FanucClient() = delete;
   explicit FanucClient(std::string robot_ip, uint16_t stream_motion_port = 60015, uint16_t rmi_port = 16001,
                        std::unique_ptr<stream_motion::StreamMotionInterface> stream_motion_interface = nullptr,
-                       std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface = nullptr);
+                       std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface = nullptr,
+                       bool use_rmi = true, uint32_t control_period_ms = 8);
 
   FanucClient(const FanucClient&) = delete;
   FanucClient& operator=(const FanucClient&) = delete;
@@ -96,6 +97,14 @@ public:
   void setDoMotnCtrl(const bool do_motn_ctrl)
   {
     do_motn_ctrl_ = do_motn_ctrl;
+  }
+
+  // Set the RMI group bitmask sent in FRC_Initialize.
+  // group_mask = std::nullopt: controller selects active groups (default, single-group robots).
+  // group_mask = 0x01: restrict RMI to group 1 (robot arm) on a multi-group controller.
+  void setGroupMask(const std::optional<uint8_t> group_mask)
+  {
+    group_mask_ = group_mask;
   }
 
   bool getLimits(double v_peak, double payload, std::vector<double>& vel_limit, std::vector<double>& acc_limit,
@@ -212,8 +221,14 @@ private:
   std::thread rt_thread_;
 
   bool do_motn_ctrl_ = true;
+  std::optional<uint8_t> group_mask_ = std::nullopt;  // RMI group bitmask; nullopt = all groups
 
-  // Manages RMI connection
+  // When false, the RMI TCP connection is never created and all RMI calls are skipped
+  // (Stream Motion only). The controller-side bootstrap (FRC_Initialize, STREAM_MOTN.TP
+  // start, remote-motion enable) must then be provided externally (e.g. via EtherCAT).
+  const bool use_rmi_;
+
+  // Manages RMI connection (nullptr when use_rmi_ is false)
   std::shared_ptr<rmi::RMIConnectionInterface> rmi_connection_;
   std::atomic<bool> rmi_running_ = false;
 
