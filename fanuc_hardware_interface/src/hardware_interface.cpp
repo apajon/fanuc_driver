@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "lifecycle_msgs/msg/state.hpp"
+
 #include "fanuc_client/gpio_buffer.hpp"
 #include "fanuc_robot_driver/constants.hpp"
 #include "gpio_config/gpio_config.hpp"
@@ -65,19 +67,13 @@ template <CommandGPIOTypes type, typename T>
 struct IOCommand : IOCommandInterface
 {
   IOCommand(int i, fanuc_client::GPIOBuffer::CommandBlock<type, T>& b) : block(b)
-  {
-    index = i;
-  }
+  { index = i; }
 
   std::string name() const override
-  {
-    return std::string(block.type());
-  }
+  { return std::string(block.type()); }
 
   void updateBuffer() override
-  {
-    block.set(index, static_cast<T>(value));
-  }
+  { block.set(index, static_cast<T>(value)); }
 
   // The block in the GPIO command buffer that this index belongs to.
   fanuc_client::GPIOBuffer::CommandBlock<type, T>& block;
@@ -98,19 +94,13 @@ template <StatusGPIOTypes type, typename T>
 struct IOState : IOStateInterface
 {
   IOState(int i, fanuc_client::GPIOBuffer::StatusBlock<type, T>& b) : block(b)
-  {
-    index = i;
-  }
+  { index = i; }
 
   std::string name() const override
-  {
-    return std::string(block.type());
-  }
+  { return std::string(block.type()); }
 
   void updateValue() override
-  {
-    value = static_cast<double>(block.get(index));
-  }
+  { value = static_cast<double>(block.get(index)); }
 
   // The block in the GPIO status buffer that this index belongs to.
   fanuc_client::GPIOBuffer::StatusBlock<type, T>& block;
@@ -408,7 +398,7 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     {
       fanuc_client_.reset();
       fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_, nullptr,
-                                                                 nullptr, use_rmi_, control_period_ms_);
+                                                                  nullptr, use_rmi_, control_period_ms_);
       fanuc_client_->setDoMotnCtrl(initial_motion_control);
       fanuc_client_->setGroupMask(initial_group_mask);
       fanuc_client_->setOutCmdInterpBuffTarget(out_cmd_interp_buff_target_);
@@ -523,6 +513,39 @@ std::vector<hardware_interface::CommandInterface> FanucHardwareInterface::export
 hardware_interface::return_type FanucHardwareInterface::read(const rclcpp::Time& /*time*/,
                                                              const rclcpp::Duration& period)
 {
+  // --- Lifecycle-state guard (INACTIVE → OK, no network call) -----------------------
+  //
+  // Root cause (upstream issue):
+  //   ros2_control calls read() for EVERY hardware component in state INACTIVE *and*
+  //   ACTIVE (see hardware_component.cpp::HardwareComponent::read()).  When the robot
+  //   is not yet connected, isStreaming() is false, the legacy code below returns
+  //   return_type::ERROR, and ros2_control immediately calls error() on the component,
+  //   which transitions it from INACTIVE → UNCONFIGURED.  This defeats the purpose of
+  //   hardware_components_initial_state::inactive which is specifically designed to
+  //   keep state interfaces (joint positions) visible to joint_state_broadcaster
+  //   without requiring an active robot connection.
+  //
+  // Fix:
+  //   Return OK immediately while INACTIVE.  The component was placed there
+  //   intentionally; stream-loss is not an error in this state.  The existing
+  //   error path (isStreaming() == false → ERROR) is preserved for ACTIVE, which is
+  //   the only state where a stream loss is operationally significant.
+  //
+  // RMI neutrality:
+  //   use_rmi is only relevant during on_configure / on_activate (bootstrap).
+  //   The cyclic read/write path is 100% Stream Motion regardless of use_rmi, so
+  //   this guard applies identically to both use_rmi=0 and use_rmi=1 modes.
+  //
+  // Side-effect fix:
+  //   The legacy code also calls stopRealtimeStream() → rmi_connection_->abort() while
+  //   INACTIVE, which triggers spurious RMI abort() calls on a nullptr rmi_connection_
+  //   when use_rmi=0.  This guard prevents that unconditionally.
+  // -----------------------------------------------------------------------------------
+  if (get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+  {
+    return hardware_interface::return_type::OK;
+  }
+
   robot_status_.is_connected = fanuc_client_ != nullptr && fanuc_client_->isStreaming();
   if (!robot_status_.is_connected)
   {
@@ -604,6 +627,18 @@ hardware_interface::return_type FanucHardwareInterface::read(const rclcpp::Time&
 
 hardware_interface::return_type FanucHardwareInterface::write(const rclcpp::Time& time, const rclcpp::Duration& period)
 {
+  // --- Lifecycle-state guard (INACTIVE → OK, no network call) -----------------------
+  // Symmetric guard to read().  In INACTIVE, command interfaces are not claimed by
+  // any controller, so write() has nothing meaningful to do.  Returning OK keeps the
+  // component stable in INACTIVE rather than letting a spurious stream-loss ERROR
+  // cascade through the write cycle and deactivate dependent controllers.
+  // See the read() comment above for the full root-cause analysis.
+  // -----------------------------------------------------------------------------------
+  if (get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+  {
+    return hardware_interface::return_type::OK;
+  }
+
   robot_status_.is_connected = fanuc_client_ != nullptr && fanuc_client_->isStreaming();
   if (!robot_status_.is_connected)
   {
@@ -662,9 +697,7 @@ hardware_interface::return_type FanucHardwareInterface::write(const rclcpp::Time
 }
 
 hardware_interface::CallbackReturn FanucHardwareInterface::on_shutdown(const rclcpp_lifecycle::State& previous_state)
-{
-  return hardware_interface::CallbackReturn::SUCCESS;
-}
+{ return hardware_interface::CallbackReturn::SUCCESS; }
 }  // namespace fanuc_robot_driver
 
 #include "pluginlib/class_list_macros.hpp"
