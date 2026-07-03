@@ -3,21 +3,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import (
-    LaunchConfiguration,
-    PathJoinSubstitution,
-)
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition, UnlessCondition
-
 from moveit_configs_utils import MoveItConfigsBuilder
-from ament_index_python.packages import get_package_share_directory
-import os
 
 
 def launch_setup(context, *args, **kwargs):
@@ -28,6 +24,7 @@ def launch_setup(context, *args, **kwargs):
     gpio_config_package = LaunchConfiguration("gpio_config_package")
     gpio_config_path = LaunchConfiguration("gpio_config_path")
     motion_control = LaunchConfiguration("motion_control")
+    group_mask = LaunchConfiguration("group_mask")
 
     nodes_to_launch = []
 
@@ -52,6 +49,7 @@ def launch_setup(context, *args, **kwargs):
             "launch_rviz": "false",
             "use_mock": use_mock,
             "motion_control": motion_control,
+            "group_mask": group_mask,
         }.items(),
         condition=UnlessCondition(use_mock),
     )
@@ -95,17 +93,11 @@ def launch_setup(context, *args, **kwargs):
     )
 
     moveit_config = (
-        MoveItConfigsBuilder(
-            robot_model.perform(context), package_name="fanuc_moveit_config"
-        )
+        MoveItConfigsBuilder(robot_model.perform(context), package_name="fanuc_moveit_config")
         .robot_description(file_path=urdf_full_path, mappings=description_arguments)
-        .robot_description_semantic(
-            file_path=f"srdf/{robot_model.perform(context)}.srdf"
-        )
+        .robot_description_semantic(file_path=f"srdf/{robot_model.perform(context)}.srdf")
         .trajectory_execution(file_path="config/moveit_controllers.yaml")
-        .planning_scene_monitor(
-            publish_robot_description=True, publish_robot_description_semantic=True
-        )
+        .planning_scene_monitor(publish_robot_description=True, publish_robot_description_semantic=True)
         .planning_pipelines(pipelines=["ompl"])
         .to_moveit_configs()
     )
@@ -119,9 +111,7 @@ def launch_setup(context, *args, **kwargs):
     )
     nodes_to_launch.append(move_group_node)
 
-    rviz_file = PathJoinSubstitution(
-        [FindPackageShare("fanuc_moveit_config"), "rviz", "view_robot.rviz"]
-    )
+    rviz_file = PathJoinSubstitution([FindPackageShare("fanuc_moveit_config"), "rviz", "view_robot.rviz"])
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
@@ -178,7 +168,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "gpio_config_path",
-            default_value="config/example_gpio_config.yaml",
+            default_value="config/example_gpio_config_small.yaml",
             description="The gpio_configuration file path in gpio_config_package",
         ),
         DeclareLaunchArgument(
@@ -191,8 +181,11 @@ def generate_launch_description():
             default_value="1",
             description="Initial motion control state.",
         ),
+        DeclareLaunchArgument(
+            "group_mask",
+            default_value="0",
+            description="RMI group bitmask for FRC_Initialize. 0 = all groups (default). 1 = group 1 only (robot arm on multi-group controllers).",
+        ),
     ]
 
-    return LaunchDescription(
-        declared_arguments + [OpaqueFunction(function=launch_setup)]
-    )
+    return LaunchDescription(declared_arguments + [OpaqueFunction(function=launch_setup)])

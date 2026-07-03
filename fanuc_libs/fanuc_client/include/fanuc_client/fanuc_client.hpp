@@ -98,6 +98,13 @@ public:
     do_motn_ctrl_ = do_motn_ctrl;
   }
 
+  // group_mask = std::nullopt: controller selects active groups (default, single-group robots).
+  // group_mask = 0x01: restrict RMI to group 1 (robot arm) on a multi-group controller.
+  void setGroupMask(const std::optional<uint8_t> group_mask)
+  {
+    group_mask_ = group_mask;
+  }
+
   bool getLimits(double v_peak, double payload, std::vector<double>& vel_limit, std::vector<double>& acc_limit,
                  std::vector<double>& jerk_limit) const;
 
@@ -216,6 +223,10 @@ private:
   // Manages RMI connection
   std::shared_ptr<rmi::RMIConnectionInterface> rmi_connection_;
   std::atomic<bool> rmi_running_ = false;
+
+  // RMI group bitmask; nullopt = all groups (safe default for single-group robots).
+  // Set to 0x01 to restrict FRC_Initialize to group 1 on multi-group controllers.
+  std::optional<uint8_t> group_mask_ = std::nullopt;
 
   // Output command interpolation buffer target size for stream motion control
   uint32_t out_cmd_interp_buff_target_;

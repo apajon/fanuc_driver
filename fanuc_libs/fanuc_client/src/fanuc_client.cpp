@@ -495,7 +495,7 @@ void FanucClient::startRMI()
   {
     rmi_connection_->reset(std::nullopt);
     rmi_connection_->initializeRemoteMotion(std::nullopt,  // timeout
-                                            1,             // groupmask
+                                            group_mask_,   // groupmask (configurable, not hardcoded)
                                             std::nullopt,  // rtsa
                                             std::nullopt   // pltzmode
     );
@@ -507,7 +507,7 @@ void FanucClient::startRMI()
     rmi_connection_->reset(std::nullopt);
     rmi_connection_->getStatus(std::nullopt);
     rmi_connection_->initializeRemoteMotion(std::nullopt,  // timeout
-                                            1,             // groupmask
+                                            group_mask_,   // groupmask (configurable, not hardcoded)
                                             std::nullopt,  // rtsa
                                             std::nullopt   // pltzmode
     );
