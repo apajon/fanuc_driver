@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "lifecycle_msgs/msg/state.hpp"
+
 #include "fanuc_client/gpio_buffer.hpp"
 #include "fanuc_robot_driver/constants.hpp"
 #include "gpio_config/gpio_config.hpp"
@@ -477,6 +479,14 @@ std::vector<hardware_interface::CommandInterface> FanucHardwareInterface::export
 hardware_interface::return_type FanucHardwareInterface::read(const rclcpp::Time& /*time*/,
                                                              const rclcpp::Duration& period)
 {
+  // When INACTIVE: return OK so the component stays INACTIVE and state interfaces
+  // remain visible (e.g. to joint_state_broadcaster). stream-loss errors only make
+  // sense in ACTIVE. See docs/inactive_hardware_state.md for full root-cause analysis.
+  if (get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+  {
+    return hardware_interface::return_type::OK;
+  }
+
   robot_status_.is_connected = fanuc_client_ != nullptr && fanuc_client_->isStreaming();
   if (!robot_status_.is_connected)
   {
@@ -558,6 +568,12 @@ hardware_interface::return_type FanucHardwareInterface::read(const rclcpp::Time&
 
 hardware_interface::return_type FanucHardwareInterface::write(const rclcpp::Time& time, const rclcpp::Duration& period)
 {
+  // Symmetric guard: in INACTIVE, command interfaces are not claimed; return OK silently.
+  if (get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
+  {
+    return hardware_interface::return_type::OK;
+  }
+
   robot_status_.is_connected = fanuc_client_ != nullptr && fanuc_client_->isStreaming();
   if (!robot_status_.is_connected)
   {
