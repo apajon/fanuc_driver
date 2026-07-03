@@ -81,7 +81,8 @@ struct FanucClient::PQueueImpl
 
 FanucClient::FanucClient(std::string robot_ip, const uint16_t stream_motion_port, const uint16_t rmi_port,
                          std::unique_ptr<stream_motion::StreamMotionInterface> stream_motion_interface,
-                         std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface)
+                         std::unique_ptr<rmi::RMIConnectionInterface> rmi_connection_interface, const bool use_rmi,
+                         const uint32_t control_period_ms)
   : robot_ip_{ std::move(robot_ip) }
   , stream_motion_port_{ stream_motion_port }
   , rmi_port_{ rmi_port }
@@ -89,20 +90,35 @@ FanucClient::FanucClient(std::string robot_ip, const uint16_t stream_motion_port
                         std::make_unique<stream_motion::StreamMotionConnection>(robot_ip_, 1.0, stream_motion_port_) :
                         std::move(stream_motion_interface) }
   , command_pos{}
-  , rmi_connection_{ rmi_connection_interface == nullptr ?
-                         RMISingleton::creatNewRMIInstance(robot_ip_, rmi_port_) :
-                         RMISingleton::setRMIInstance(std::move(rmi_connection_interface)) }
+  , use_rmi_{ use_rmi }
+  , rmi_connection_{ !use_rmi ? nullptr :
+                         (rmi_connection_interface == nullptr ?
+                              RMISingleton::creatNewRMIInstance(robot_ip_, rmi_port_) :
+                              RMISingleton::setRMIInstance(std::move(rmi_connection_interface))) }
   , out_cmd_interp_buff_target_{ 8 }
   , force_sensor_type_{ 0 }
   , p_queue_impl_(std::make_unique<PQueueImpl>())
 {
-  rmi_connection_->connect(5);
+  if (use_rmi_)
+  {
+    rmi_connection_->connect(5);
+  }
   stream_motion_->sendStopPacket();
-  stream_motion::ControllerCapabilityResultPacket controller_capability;
-  stream_motion_->getControllerCapability(controller_capability);
-  control_period_ = controller_capability.sampling_rate;
-  client_version_ = controller_capability.available_version;
-  fetchRobotLimits();
+  if (use_rmi_)
+  {
+    stream_motion::ControllerCapabilityResultPacket controller_capability;
+    stream_motion_->getControllerCapability(controller_capability);
+    control_period_ = controller_capability.sampling_rate;
+    client_version_ = controller_capability.available_version;
+    fetchRobotLimits();
+  }
+  else
+  {
+    // Stream Motion only: STREAM_MOTN.TP and remote-motion are bootstrapped externally
+    // (e.g. via EtherCAT). The synchronous capability/limits handshake is not answered by
+    // the controller in this mode, so skip it and use the externally provided control period.
+    control_period_ = control_period_ms;
+  }
 
   setupSignalHandler();
 }
@@ -128,7 +144,10 @@ FanucClient::~FanucClient()
     try
     {
       std::cout << "Aborting RMI connection during destruction" << std::endl;
-      rmi_connection_->abort(std::nullopt);
+      if (rmi_connection_)
+      {
+        rmi_connection_->abort(std::nullopt);
+      }
     }
     catch (const std::exception& e)
     {
@@ -157,7 +176,10 @@ FanucClient::~FanucClient()
 
   try
   {
-    rmi_connection_->disconnect(std::nullopt);
+    if (rmi_connection_)
+    {
+      rmi_connection_->disconnect(std::nullopt);
+    }
   }
   catch (const std::exception& e)
   {
@@ -461,6 +483,11 @@ bool FanucClient::getLimits(const double v_peak, const double payload, std::vect
 
 void FanucClient::startRMI()
 {
+  if (!use_rmi_)
+  {
+    // RMI disabled (Stream Motion only): controller-side bootstrap is provided externally.
+    return;
+  }
   try
   {
     const auto rmi_status = rmi_connection_->getStatus(std::nullopt);
@@ -494,11 +521,7 @@ void FanucClient::startRMI()
   try
   {
     rmi_connection_->reset(std::nullopt);
-    rmi_connection_->initializeRemoteMotion(std::nullopt,  // timeout
-                                            group_mask_,   // groupmask (configurable, not hardcoded)
-                                            std::nullopt,  // rtsa
-                                            std::nullopt   // pltzmode
-    );
+    rmi_connection_->initializeRemoteMotion(std::nullopt, group_mask_, std::nullopt, std::nullopt);
   }
   catch (const std::runtime_error&)
   {
@@ -506,11 +529,7 @@ void FanucClient::startRMI()
     rmi_connection_->abort(std::nullopt);
     rmi_connection_->reset(std::nullopt);
     rmi_connection_->getStatus(std::nullopt);
-    rmi_connection_->initializeRemoteMotion(std::nullopt,  // timeout
-                                            group_mask_,   // groupmask (configurable, not hardcoded)
-                                            std::nullopt,  // rtsa
-                                            std::nullopt   // pltzmode
-    );
+    rmi_connection_->initializeRemoteMotion(std::nullopt, group_mask_, std::nullopt, std::nullopt);
   }
   rmi_running_ = true;
 }
@@ -606,7 +625,9 @@ void FanucClient::startRealtimeStream(std::shared_ptr<GPIOBuffer> gpio_buffer)
     stream_motion_->configureGPIO(gpio_buffer_->toStreamMotionConfig());
   }
 
-  if (do_motn_ctrl_)
+  // When RMI is disabled, the controller-side STREAM_MOTN.TP program and remote-motion
+  // state are started externally (e.g. via EtherCAT), so skip the RMI bootstrap.
+  if (do_motn_ctrl_ && use_rmi_)
   {
     startRMI();
     rmi_connection_->programCallNonBlocking("STREAM_MOTN");
@@ -693,17 +714,18 @@ void FanucClient::stopRealtimeStream()
 }
 
 bool FanucClient::isStreaming()
-{
-  return is_streaming_;
-}
+{ return is_streaming_; }
 
 uint32_t FanucClient::getControlPeriod() const
-{
-  return control_period_;
-}
+{ return control_period_; }
 
 void FanucClient::setPayloadSchedule(const uint8_t payload_schedule) const
 {
+  if (!use_rmi_)
+  {
+    // RMI disabled (Stream Motion only): payload scheduling is managed externally.
+    return;
+  }
   rmi_connection_->setPayloadSchedule(payload_schedule, std::nullopt);
 }
 

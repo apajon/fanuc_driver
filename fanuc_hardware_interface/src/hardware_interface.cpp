@@ -67,19 +67,13 @@ template <CommandGPIOTypes type, typename T>
 struct IOCommand : IOCommandInterface
 {
   IOCommand(int i, fanuc_client::GPIOBuffer::CommandBlock<type, T>& b) : block(b)
-  {
-    index = i;
-  }
+  { index = i; }
 
   std::string name() const override
-  {
-    return std::string(block.type());
-  }
+  { return std::string(block.type()); }
 
   void updateBuffer() override
-  {
-    block.set(index, static_cast<T>(value));
-  }
+  { block.set(index, static_cast<T>(value)); }
 
   // The block in the GPIO command buffer that this index belongs to.
   fanuc_client::GPIOBuffer::CommandBlock<type, T>& block;
@@ -100,19 +94,13 @@ template <StatusGPIOTypes type, typename T>
 struct IOState : IOStateInterface
 {
   IOState(int i, fanuc_client::GPIOBuffer::StatusBlock<type, T>& b) : block(b)
-  {
-    index = i;
-  }
+  { index = i; }
 
   std::string name() const override
-  {
-    return std::string(block.type());
-  }
+  { return std::string(block.type()); }
 
   void updateValue() override
-  {
-    value = static_cast<double>(block.get(index));
-  }
+  { value = static_cast<double>(block.get(index)); }
 
   // The block in the GPIO status buffer that this index belongs to.
   fanuc_client::GPIOBuffer::StatusBlock<type, T>& block;
@@ -354,7 +342,7 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     return CallbackReturn::ERROR;
   }
 
-  // group_mask=0 (XACRO default) means "let the controller decide" (nullopt = all active groups).
+  // group_mask=0 (XACRO default) means "let the controller decide" (nullopt → all active groups).
   // Set group_mask=1 to restrict RMI to group 1 (robot arm) on a multi-group controller.
   std::optional<uint8_t> initial_group_mask = std::nullopt;
   const auto group_mask_it = info_.hardware_parameters.find("group_mask");
@@ -367,8 +355,39 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     }
   }
 
+  // use_rmi=1 (default) keeps the standard RMI bootstrap. use_rmi=0 runs the driver in
+  // Stream Motion only mode: no RMI TCP connection is opened and all RMI calls are skipped.
+  // The controller-side bootstrap (FRC_Initialize, STREAM_MOTN.TP start) must then be
+  // provided externally (e.g. via EtherCAT).
+  const auto use_rmi_it = info_.hardware_parameters.find("use_rmi");
+  use_rmi_ = (use_rmi_it == info_.hardware_parameters.end() || use_rmi_it->second.empty()) ||
+             (StringToInt("use_rmi", use_rmi_it->second) == 1);
+
+  // control_period_ms is the Stream Motion sampling period (ms) used to compute joint
+  // velocities. With use_rmi=1 it is overwritten by the controller capability handshake.
+  // With use_rmi=0 that handshake is skipped, so this value is used as-is (default 8 ms).
+  const auto control_period_ms_it = info_.hardware_parameters.find("control_period_ms");
+  if (control_period_ms_it != info_.hardware_parameters.end() && !control_period_ms_it->second.empty())
+  {
+    const int control_period_ms_value = StringToInt("control_period_ms", control_period_ms_it->second);
+    if (control_period_ms_value > 0)
+    {
+      control_period_ms_ = static_cast<uint32_t>(control_period_ms_value);
+    }
+  }
+
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "payload_schedule: " << payload_schedule_);
-  RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Starting RMI with: " << ip_address_);
+  RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "use_rmi: " << use_rmi_);
+  if (use_rmi_)
+  {
+    RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Starting RMI with: " << ip_address_);
+  }
+  else
+  {
+    RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface),
+                       "RMI disabled (Stream Motion only): no RMI/TCP connection to " << ip_address_);
+    RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Using control_period_ms: " << control_period_ms_);
+  }
   RCLCPP_INFO_STREAM(rclcpp::get_logger(kFRHWInterface), "Initial Motion Control Mode: " << initial_motion_control);
 
   // Initialize the driver client
@@ -378,7 +397,8 @@ FanucHardwareInterface::on_configure(const rclcpp_lifecycle::State& /*previous_s
     try
     {
       fanuc_client_.reset();
-      fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_);
+      fanuc_client_ = std::make_unique<fanuc_client::FanucClient>(ip_address_, stream_motion_port_, rmi_port_, nullptr,
+                                                                  nullptr, use_rmi_, control_period_ms_);
       fanuc_client_->setDoMotnCtrl(initial_motion_control);
       fanuc_client_->setGroupMask(initial_group_mask);
       fanuc_client_->setOutCmdInterpBuffTarget(out_cmd_interp_buff_target_);
@@ -493,9 +513,34 @@ std::vector<hardware_interface::CommandInterface> FanucHardwareInterface::export
 hardware_interface::return_type FanucHardwareInterface::read(const rclcpp::Time& /*time*/,
                                                              const rclcpp::Duration& period)
 {
-  // When INACTIVE: return OK so the component stays INACTIVE and state interfaces
-  // remain visible (e.g. to joint_state_broadcaster). stream-loss errors only make
-  // sense in ACTIVE. See docs/inactive_hardware_state.md for full root-cause analysis.
+  // --- Lifecycle-state guard (INACTIVE → OK, no network call) -----------------------
+  //
+  // Root cause (upstream issue):
+  //   ros2_control calls read() for EVERY hardware component in state INACTIVE *and*
+  //   ACTIVE (see hardware_component.cpp::HardwareComponent::read()).  When the robot
+  //   is not yet connected, isStreaming() is false, the legacy code below returns
+  //   return_type::ERROR, and ros2_control immediately calls error() on the component,
+  //   which transitions it from INACTIVE → UNCONFIGURED.  This defeats the purpose of
+  //   hardware_components_initial_state::inactive which is specifically designed to
+  //   keep state interfaces (joint positions) visible to joint_state_broadcaster
+  //   without requiring an active robot connection.
+  //
+  // Fix:
+  //   Return OK immediately while INACTIVE.  The component was placed there
+  //   intentionally; stream-loss is not an error in this state.  The existing
+  //   error path (isStreaming() == false → ERROR) is preserved for ACTIVE, which is
+  //   the only state where a stream loss is operationally significant.
+  //
+  // RMI neutrality:
+  //   use_rmi is only relevant during on_configure / on_activate (bootstrap).
+  //   The cyclic read/write path is 100% Stream Motion regardless of use_rmi, so
+  //   this guard applies identically to both use_rmi=0 and use_rmi=1 modes.
+  //
+  // Side-effect fix:
+  //   The legacy code also calls stopRealtimeStream() → rmi_connection_->abort() while
+  //   INACTIVE, which triggers spurious RMI abort() calls on a nullptr rmi_connection_
+  //   when use_rmi=0.  This guard prevents that unconditionally.
+  // -----------------------------------------------------------------------------------
   if (get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
   {
     return hardware_interface::return_type::OK;
@@ -582,7 +627,13 @@ hardware_interface::return_type FanucHardwareInterface::read(const rclcpp::Time&
 
 hardware_interface::return_type FanucHardwareInterface::write(const rclcpp::Time& time, const rclcpp::Duration& period)
 {
-  // Symmetric guard: in INACTIVE, command interfaces are not claimed; return OK silently.
+  // --- Lifecycle-state guard (INACTIVE → OK, no network call) -----------------------
+  // Symmetric guard to read().  In INACTIVE, command interfaces are not claimed by
+  // any controller, so write() has nothing meaningful to do.  Returning OK keeps the
+  // component stable in INACTIVE rather than letting a spurious stream-loss ERROR
+  // cascade through the write cycle and deactivate dependent controllers.
+  // See the read() comment above for the full root-cause analysis.
+  // -----------------------------------------------------------------------------------
   if (get_lifecycle_state().id() == lifecycle_msgs::msg::State::PRIMARY_STATE_INACTIVE)
   {
     return hardware_interface::return_type::OK;
@@ -646,9 +697,7 @@ hardware_interface::return_type FanucHardwareInterface::write(const rclcpp::Time
 }
 
 hardware_interface::CallbackReturn FanucHardwareInterface::on_shutdown(const rclcpp_lifecycle::State& previous_state)
-{
-  return hardware_interface::CallbackReturn::SUCCESS;
-}
+{ return hardware_interface::CallbackReturn::SUCCESS; }
 }  // namespace fanuc_robot_driver
 
 #include "pluginlib/class_list_macros.hpp"
