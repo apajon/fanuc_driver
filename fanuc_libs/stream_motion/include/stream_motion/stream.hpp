@@ -10,6 +10,11 @@
 
 #include "stream_motion/packets.hpp"
 
+#ifdef FANUC_SM_TIMING_DEBUG
+#include <cstdint>
+#include <vector>
+#endif
+
 namespace stream_motion
 {
 class StreamMotionInterface
@@ -102,6 +107,38 @@ public:
 
   void configureForceSensor(uint32_t do_reset, uint32_t force_sensor_type) const override;
 
+#ifdef FANUC_SM_TIMING_DEBUG
+  // Timing instrumentation (compiled out unless FANUC_SM_TIMING_DEBUG is defined).
+  // Proves which branch of getStatusPacket() is taken and correlates it with sendCommand().
+  enum class SmDebugBranch : int
+  {
+    normal_recv = 0,
+    catch_up = 1,
+    exceeded_error = 2,
+    timeout_error = 3
+  };
+  struct SmDebugRow
+  {
+    uint64_t cycle;
+    long long t_enter_ns;
+    long long t_recv_start_ns;
+    long long t_recv_end_ns;
+    long long t_exit_ns;
+    int branch;
+    uint32_t cmd_seq_before;
+    uint32_t status_seq_before;
+    uint32_t recv_status_seq;
+    uint32_t cmd_seq_after;
+    uint32_t status_seq_after;
+    bool recv_executed;
+    long long t_send_start_ns;
+    long long t_send_end_ns;
+    uint32_t send_cmd_seq;
+    bool send_recorded;
+  };
+  void dumpTimingCsv() const;
+#endif
+
 private:
   uint32_t status_sequence_no_ = 0;
   uint32_t command_sequence_no_ = 0;
@@ -110,6 +147,11 @@ private:
 
   struct PSocketImpl;
   std::unique_ptr<PSocketImpl> socket_impl_;
+
+#ifdef FANUC_SM_TIMING_DEBUG
+  mutable std::vector<SmDebugRow> sm_debug_rows_;
+  uint64_t sm_debug_cycle_ = 0;
+#endif
 };
 
 void swapCommandPacketBytes(CommandPacket& command);

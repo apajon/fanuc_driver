@@ -16,22 +16,34 @@
 #include "stream_motion/byte_ops.hpp"
 #include "stream_motion/packets.hpp"
 
+#ifdef FANUC_SM_TIMING_DEBUG
+#include <chrono>
+#include <cstdlib>
+#include <fstream>
+#endif
+
 namespace stream_motion
 {
+#ifdef FANUC_SM_TIMING_DEBUG
+namespace
+{
+long long SmNowNs()
+{
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+}  // namespace
+#endif
 namespace
 {
 constexpr uint16_t kCommandPacketUnused = 0xFFFF;
 constexpr int kThresholdPayloadLength = 20;
 
 bool IsReadGPIOConfig(const GPIOControlConfig& config)
-{
-  return config.command_type == GPIOCommandType::IOState || config.command_type == GPIOCommandType::NumRegState;
-}
+{ return config.command_type == GPIOCommandType::IOState || config.command_type == GPIOCommandType::NumRegState; }
 
 bool IsWriteGPIOConfig(const GPIOControlConfig& config)
-{
-  return config.command_type == GPIOCommandType::IOCmd || config.command_type == GPIOCommandType::NumRegCmd;
-}
+{ return config.command_type == GPIOCommandType::IOCmd || config.command_type == GPIOCommandType::NumRegCmd; }
 
 void CheckOverlapping(const std::vector<GPIOControlConfig>& gpio_config)
 {
@@ -151,12 +163,46 @@ struct StreamMotionConnection::PSocketImpl
   double timeout;
 };
 
+#ifdef FANUC_SM_TIMING_DEBUG
+StreamMotionConnection::~StreamMotionConnection()
+{ dumpTimingCsv(); }
+
+void StreamMotionConnection::dumpTimingCsv() const
+{
+  const char* path = std::getenv("FANUC_SM_TIMING_CSV");
+  std::ofstream csv(path != nullptr ? path : "/tmp/fanuc_sm_timing.csv");
+  if (!csv)
+  {
+    return;
+  }
+  csv << "cycle,t_enter_ns,t_recv_start_ns,t_recv_end_ns,t_exit_ns,branch,cmd_seq_before,status_seq_before,"
+         "recv_status_seq,cmd_seq_after,status_seq_after,recv_executed,receive_duration_us,t_send_start_ns,"
+         "t_send_end_ns,send_cmd_seq,send_recorded,send_duration_us\n";
+  const char* branch_names[] = { "normal_recv", "catch_up", "exceeded_error", "timeout_error" };
+  for (const auto& r : sm_debug_rows_)
+  {
+    const double recv_us = r.recv_executed ? static_cast<double>(r.t_recv_end_ns - r.t_recv_start_ns) / 1000.0 : 0.0;
+    const double send_us = r.send_recorded ? static_cast<double>(r.t_send_end_ns - r.t_send_start_ns) / 1000.0 : 0.0;
+    const char* bname = (r.branch >= 0 && r.branch < 4) ? branch_names[r.branch] : "unknown";
+    csv << r.cycle << ',' << r.t_enter_ns << ',' << r.t_recv_start_ns << ',' << r.t_recv_end_ns << ',' << r.t_exit_ns
+        << ',' << bname << ',' << r.cmd_seq_before << ',' << r.status_seq_before << ',' << r.recv_status_seq << ','
+        << r.cmd_seq_after << ',' << r.status_seq_after << ',' << (r.recv_executed ? 1 : 0) << ',' << recv_us << ','
+        << r.t_send_start_ns << ',' << r.t_send_end_ns << ',' << r.send_cmd_seq << ',' << (r.send_recorded ? 1 : 0)
+        << ',' << send_us << '\n';
+  }
+}
+#else
 StreamMotionConnection::~StreamMotionConnection() = default;
+#endif
 
 StreamMotionConnection::StreamMotionConnection(const std::string& robot_ip_address, const double timeout,
                                                uint16_t robot_port)
   : StreamMotionInterface(), socket_impl_{ std::make_unique<PSocketImpl>(robot_ip_address, robot_port, timeout) }
 {
+#ifdef FANUC_SM_TIMING_DEBUG
+  sm_debug_rows_.reserve(
+      200000);  // ~26 min @ 125 Hz (200000/125=1600s), preallocated to avoid realtime-loop allocation
+#endif
 }
 
 bool StreamMotionConnection::getRobotLimits(const uint32_t axis_number, RobotThresholdPacket& robot_threshold_velocity,
@@ -380,13 +426,48 @@ void StreamMotionConnection::sendCommand(const std::array<double, kMaxAxisNumber
   command.unused = kCommandPacketUnused;
   command.io_command = io_command;
   swapCommandPacketBytes(command);
+#ifdef FANUC_SM_TIMING_DEBUG
+  const long long sm_send_start_ns = SmNowNs();
+#endif
   socket_impl_->send(command);
+#ifdef FANUC_SM_TIMING_DEBUG
+  const long long sm_send_end_ns = SmNowNs();
+  if (!sm_debug_rows_.empty())
+  {
+    SmDebugRow& row = sm_debug_rows_.back();
+    row.t_send_start_ns = sm_send_start_ns;
+    row.t_send_end_ns = sm_send_end_ns;
+    row.send_cmd_seq = command_sequence_no_;  // Host-order command sequence corresponding to the command packet sent.
+    row.send_recorded = true;
+  }
+#endif
 }
 
 bool StreamMotionConnection::getStatusPacket(RobotStatusPacket& status)
 {
+#ifdef FANUC_SM_TIMING_DEBUG
+  SmDebugRow dbg{};
+  dbg.cycle = sm_debug_cycle_++;
+  dbg.t_enter_ns = SmNowNs();
+  dbg.cmd_seq_before = command_sequence_no_;
+  dbg.status_seq_before = status_sequence_no_;
+  const auto sm_dbg_finalize = [&]() {
+    dbg.cmd_seq_after = command_sequence_no_;
+    dbg.status_seq_after = status_sequence_no_;
+    dbg.t_exit_ns = SmNowNs();
+    if (sm_debug_rows_.size() < sm_debug_rows_.capacity())
+    {
+      sm_debug_rows_.push_back(dbg);
+    }
+  };
+#endif
   if (command_sequence_no_ == status_sequence_no_)
   {
+#ifdef FANUC_SM_TIMING_DEBUG
+    dbg.branch = static_cast<int>(SmDebugBranch::normal_recv);
+    dbg.recv_executed = true;
+    dbg.t_recv_start_ns = SmNowNs();
+#endif
     status = RobotStatusPacket{};
     bool received = false;
 
@@ -420,10 +501,17 @@ bool StreamMotionConnection::getStatusPacket(RobotStatusPacket& status)
     {
       received = socket_impl_->receive(status);
     }
+#ifdef FANUC_SM_TIMING_DEBUG
+    dbg.t_recv_end_ns = SmNowNs();
+#endif
 
     if (!received)
     {
       std::cerr << "Fail to get status packet." << std::endl;
+#ifdef FANUC_SM_TIMING_DEBUG
+      dbg.branch = static_cast<int>(SmDebugBranch::timeout_error);
+      sm_dbg_finalize();
+#endif
       return false;
     }
 
@@ -431,6 +519,9 @@ bool StreamMotionConnection::getStatusPacket(RobotStatusPacket& status)
 
     // Swap the bits of the received status packet
     swapRobotStatusPacketBytes(status);
+#ifdef FANUC_SM_TIMING_DEBUG
+    dbg.recv_status_seq = status.sequence_no;
+#endif
 
     if (status_sequence_no_ != status.sequence_no)
     {
@@ -441,12 +532,19 @@ bool StreamMotionConnection::getStatusPacket(RobotStatusPacket& status)
   }
   else if (command_sequence_no_ < status_sequence_no_)
   {
+#ifdef FANUC_SM_TIMING_DEBUG
+    dbg.branch = static_cast<int>(SmDebugBranch::catch_up);
+#endif
     std::cerr << "Command lagging behind. Command seq: " << command_sequence_no_
               << " Status seq: " << status_sequence_no_ << std::endl;
     std::cerr << "Sending extra command to catch up." << std::endl;
   }
   else
   {
+#ifdef FANUC_SM_TIMING_DEBUG
+    dbg.branch = static_cast<int>(SmDebugBranch::exceeded_error);
+    sm_dbg_finalize();
+#endif
     std::cerr << "Command seq exceeded status seq. Command seq: " << command_sequence_no_
               << " Status seq: " << status_sequence_no_ << std::endl;
     std::cerr << "This should not happen. Something is wrong. Need to abort." << std::endl;
@@ -455,6 +553,9 @@ bool StreamMotionConnection::getStatusPacket(RobotStatusPacket& status)
 
   command_sequence_no_++;
 
+#ifdef FANUC_SM_TIMING_DEBUG
+  sm_dbg_finalize();
+#endif
   return true;
 }
 
